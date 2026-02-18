@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SolArena ⚡
 
-## Getting Started
+Minimal PvP game hub built on Solana.
 
-First, run the development server:
+Currently focused on leaderboard infrastructure.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Overview
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+SolArena is a lightweight PvP platform designed to unify multiple on-chain games under a shared competitive layer.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The goal:
 
-## Learn More
+- Shared leaderboard
+- Transparent scoring
+- Token-based multipliers
+- Minimal surface area
 
-To learn more about Next.js, take a look at the following resources:
+No unnecessary abstraction.
+No over-engineering.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Current Focus
 
-## Deploy on Vercel
+Leaderboard system:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Game result tracking
+- Player ranking logic
+- Score aggregation
+- Token-based multiplier integration (planned)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## Architecture Direction
+
+Games → Result submission → Leaderboard engine → Ranking output → UI
+
+Designed to remain modular and minimal.
+
+---
+
+## Stack
+
+- Next.js
+- TypeScript
+- Solana Web3.js
+- Vercel
+
+---
+
+## Status
+
+Actively building.
+
+Leaderboard infrastructure in progress.
+
+---
+
+## Roadmap
+
+- [ ] Leaderboard core logic
+- [ ] Player ranking system
+- [ ] Token multiplier integration
+- [ ] Unified PvP dashboard
+- [ ] Cross-game statistics
+
+---
+
+## Philosophy
+
+Games create engagement.
+Infrastructure creates longevity.
+
+SolArena focuses on the layer that connects them.
+
+---
+
+Built in public.
