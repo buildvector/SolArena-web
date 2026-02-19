@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Player {
+  wallet        String   @id
+  createdAt     DateTime @default(now())
+  lastSeenAt    DateTime @updatedAt
+
+  burnedAmount  Int      @default(0)
+  multiplier    Float    @default(1.0)
+
+  gamesPlayed   Int      @default(0)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+
+  winStreak     Int      @default(0)
+  bestStreak    Int      @default(0)
+
+  volumeSol     Float    @default(0)
+
+  pointsRaw     Float    @default(0)
+  pointsTotal   Float    @default(0)
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  type      String
+  wallet    String
+  amountSol Float?
+  meta      String?
+}
