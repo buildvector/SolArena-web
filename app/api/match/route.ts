@@ -11,7 +11,7 @@ function isLocal(req: Request) {
 }
 
 function corsHeaders(req: Request) {
-  // If you want to lock this down later, you can set a specific origin instead of "*"
+  // If you want to lock this down later, set a specific origin instead of reflecting it
   const origin = req.headers.get("origin") || "*";
   return {
     "Access-Control-Allow-Origin": origin,
@@ -22,13 +22,28 @@ function corsHeaders(req: Request) {
   };
 }
 
-// points model (simple MVP)
+// simple MVP scoring
 function pointsFor(result: string) {
   if (result === "win") return 3;
   if (result === "play") return 1;
   if (result === "loss") return 0;
   return 0;
 }
+
+function normalizeGame(gameRaw: string) {
+  // keep it stable + predictable
+  return String(gameRaw || "").trim().toLowerCase();
+}
+
+function normalizeResult(resultRaw: string) {
+  return String(resultRaw || "").trim().toLowerCase();
+}
+
+/**
+ * We now accept these games (so Flip won't 400 "bad game").
+ * If you later add more games, just add them here.
+ */
+const ALLOWED_GAMES = new Set(["ttt", "flip", "reaction"]);
 
 export async function OPTIONS(req: Request) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
@@ -51,13 +66,15 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
 
     const wallet = String(body?.wallet ?? "").trim();
-    const game = String(body?.game ?? "").trim(); // e.g. "ttt"
-    const result = String(body?.result ?? "").trim(); // "win" | "play" | "loss"
+    const game = normalizeGame(body?.game);
+    const result = normalizeResult(body?.result);
+
     const amountSolRaw = body?.amountSol;
     const amountSol =
       amountSolRaw === undefined || amountSolRaw === null
         ? null
         : Number(amountSolRaw);
+
     const metaIn = body?.meta ? String(body.meta) : null;
 
     if (!wallet || wallet.length < 10) {
@@ -66,18 +83,21 @@ export async function POST(req: Request) {
         { status: 400, headers: corsHeaders(req) }
       );
     }
-    if (!game) {
+
+    if (!game || !ALLOWED_GAMES.has(game)) {
       return NextResponse.json(
         { error: "bad game" },
         { status: 400, headers: corsHeaders(req) }
       );
     }
+
     if (!["win", "play", "loss"].includes(result)) {
       return NextResponse.json(
         { error: "bad result" },
         { status: 400, headers: corsHeaders(req) }
       );
     }
+
     if (amountSol !== null && (!Number.isFinite(amountSol) || amountSol < 0)) {
       return NextResponse.json(
         { error: "bad amountSol" },
@@ -87,34 +107,30 @@ export async function POST(req: Request) {
 
     const pts = pointsFor(result);
 
-    // Event.type is REQUIRED by your schema
+    // Event.type is REQUIRED by schema
     const eventType = `${game}:${result}`;
 
-    // Store richer details inside meta (since Event has no game/result/points columns)
+    // Store richer details inside meta (Event has only: type, wallet, amountSol, meta)
     const meta =
       metaIn && metaIn.length
         ? metaIn
         : JSON.stringify({ game, result, points: pts });
 
-    // Do everything in a transaction to keep streak/points consistent
     const out = await prisma.$transaction(async (tx) => {
       // Ensure player exists
       let player = await tx.player.findUnique({ where: { wallet } });
 
       if (!player) {
         player = await tx.player.create({
-          data: {
-            wallet,
-            // all other fields have defaults in schema
-          },
+          data: { wallet },
         });
       }
 
       const multiplier = Number(player.multiplier ?? 1.0);
-      const addRaw = pts; // base points
+      const addRaw = pts;
       const addTotal = pts * multiplier;
 
-      // Streak logic
+      // streak logic
       let winStreak = player.winStreak ?? 0;
       let bestStreak = player.bestStreak ?? 0;
 
@@ -129,9 +145,8 @@ export async function POST(req: Request) {
         lossesInc = 1;
         winStreak = 0;
       }
-      // result === "play": counts as a game, but no win/loss and no streak change
+      // "play": no win/loss, streak unchanged
 
-      // Create event row
       await tx.event.create({
         data: {
           type: eventType,
@@ -141,19 +156,18 @@ export async function POST(req: Request) {
         },
       });
 
-      // Update player totals
       const updated = await tx.player.update({
         where: { wallet },
         data: {
           gamesPlayed: { increment: 1 },
-          wins: winsInc ? { increment: winsInc } : undefined,
-          losses: lossesInc ? { increment: lossesInc } : undefined,
+          ...(winsInc ? { wins: { increment: winsInc } } : {}),
+          ...(lossesInc ? { losses: { increment: lossesInc } } : {}),
           winStreak,
           bestStreak,
-          volumeSol: amountSol !== null ? { increment: amountSol } : undefined,
+          ...(amountSol !== null ? { volumeSol: { increment: amountSol } } : {}),
           pointsRaw: { increment: addRaw },
           pointsTotal: { increment: addTotal },
-          // lastSeenAt is @updatedAt, don't set it manually
+          // lastSeenAt is @updatedAt (Prisma handles)
         },
       });
 
