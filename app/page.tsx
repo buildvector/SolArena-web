@@ -1,294 +1,268 @@
-"use client";
+import Image from "next/image";
+import TopNav from "@/app/components/TopNav";
+import LeaderboardSection from "@/app/components/LeaderboardSection";
+import BurnSection from "@/app/components/BurnSection";
 
-import { useEffect, useMemo, useState } from "react";
-import { CLUSTER, TOKEN_SYMBOL } from "@/lib/token-config";
-import BurnPanel from "./components/BurnPanel";
-
-type GameKey = "all" | "flip" | "reaction" | "ttt";
-
-type Player = {
-  wallet: string;
-  wins: number;
-  volumeSol: number;
-  multiplier: number;
-  pointsTotal: number;
-  tier?: number;
-  burnedAmount?: number;
-
-  winsByGame?: { flip: number; reaction: number; ttt: number };
-  lossesByGame?: { flip: number; reaction: number; ttt: number };
-  gameLabels?: { flip: string; reaction: string; ttt: string };
-};
-
-type Event = {
-  id: string;
-  createdAt: string;
-  type: string;
-  wallet: string;
-  amountSol: number | null;
-  meta: string | null;
-};
-
-function shortWallet(w: string) {
-  return w.length > 10 ? `${w.slice(0, 6)}...${w.slice(-4)}` : w;
-}
-
-function formatCompact(n: number) {
-  const v = Number(n || 0);
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(v % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(v % 1_000 === 0 ? 0 : 1)}k`;
-  return `${v.toFixed(0)}`;
-}
-
-// 🔥 OFFICIEL TIER PLAN
-const TIERS = [
-  { name: "Tier 1", burn: 10_000 },
-  { name: "Tier 2", burn: 25_000 },
-  { name: "Tier 3", burn: 50_000 },
-  { name: "Tier 4", burn: 100_000 },
-  { name: "Tier 5", burn: 250_000 },
-  { name: "Tier 6", burn: 500_000 },
-  { name: "Tier 7", burn: 750_000 },
-  { name: "Tier 8", burn: 1_000_000 },
-  { name: "Tier 9", burn: 2_000_000 },
-  { name: "Tier 10", burn: 5_000_000 },
-];
-
-function getTierFromBurn(burned: number) {
-  let tierIndex = -1;
-  for (let i = 0; i < TIERS.length; i++) {
-    if (burned >= TIERS[i].burn) tierIndex = i;
-  }
-  return tierIndex >= 0 ? tierIndex + 1 : 0;
-}
-
-function getTierProgress(burned: number) {
-  const tier = getTierFromBurn(burned);
-
-  const prev = tier <= 0 ? 0 : TIERS[tier - 1].burn;
-  const next = tier >= TIERS.length ? null : TIERS[tier]?.burn;
-
-  if (!next) {
-    return { tier, prev, next: null as number | null, pct: 100 };
-  }
-
-  const denom = Math.max(1, next - prev);
-  const pct = Math.max(0, Math.min(100, ((burned - prev) / denom) * 100));
-  return { tier, prev, next, pct };
-}
-
-function tierStyles(tier: number) {
-  if (tier >= 9) return "bg-red-500/15 text-red-200 border-red-500/30";
-  if (tier >= 7) return "bg-fuchsia-500/15 text-fuchsia-200 border-fuchsia-500/30";
-  if (tier >= 4) return "bg-amber-500/15 text-amber-200 border-amber-500/30";
-  return "bg-gray-500/15 text-gray-200 border-gray-500/30";
-}
-
-function TierBadge({ tier }: { tier: number }) {
-  if (tier <= 0) return <span className="text-gray-500 text-sm">—</span>;
-
+function GlowBg() {
   return (
-    <span
-      className={[
-        "inline-flex items-center justify-center rounded-full border px-2 py-1 text-xs font-semibold",
-        tierStyles(tier),
-      ].join(" ")}
-      title={TIERS[tier - 1]?.name}
-    >
-      🔥 {TIERS[tier - 1]?.name}
-    </span>
-  );
-}
-
-function ProgressBar({ pct }: { pct: number }) {
-  return (
-    <div className="mt-2 h-2 w-full rounded-full bg-white/10 overflow-hidden">
-      <div className="h-full bg-white/60" style={{ width: `${pct}%` }} />
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-black">
+      <div className="absolute inset-0 opacity-90">
+        <div className="absolute -top-32 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full blur-3xl bg-[radial-gradient(circle,rgba(34,211,238,0.09),rgba(168,85,247,0.10),rgba(0,0,0,0)_65%)]" />
+        <div className="absolute -bottom-40 right-1/4 h-[520px] w-[720px] translate-x-1/2 rounded-full blur-3xl bg-[radial-gradient(circle,rgba(168,85,247,0.10),rgba(34,211,238,0.06),rgba(0,0,0,0)_70%)]" />
+      </div>
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.58),rgba(0,0,0,0.93))]" />
     </div>
   );
 }
 
-export default function Home() {
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [gameFilter, setGameFilter] = useState<GameKey>("all");
+function SecondaryButton({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      className={[
+        "inline-flex items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold",
+        "border border-white/10 bg-white/5 text-gray-200",
+        "hover:bg-white/10 hover:border-white/15",
+        "transition-all",
+      ].join(" ")}
+    >
+      {label}
+    </a>
+  );
+}
 
-  async function load() {
-    const [lb, ev] = await Promise.all([
-      fetch("/api/leaderboard").then((r) => r.json()),
-      fetch("/api/events").then((r) => r.json()),
-    ]);
-    setPlayers(lb);
-    setEvents(ev);
-  }
+function PrimaryCta({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      className={[
+        "group inline-flex items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold",
+        "border border-violet-400/25 bg-violet-500/12 text-white",
+        "hover:bg-violet-500/18 hover:border-violet-400/35",
+        "transition-all",
+      ].join(" ")}
+    >
+      <span className="mr-2">{label}</span>
+      <span className="opacity-70 group-hover:opacity-100 transition">↓</span>
+    </a>
+  );
+}
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, []);
+/** Minimal “Shuffle-ish” game poster card: tight, big art, little chrome */
+function GamePoster({
+  title,
+  subtitle,
+  badge,
+  href,
+  accent,
+  imageSrc,
+}: {
+  title: string;
+  subtitle: string;
+  badge: string;
+  href: string;
+  accent: "violet" | "cyan" | "fuchsia";
+  imageSrc: string;
+}) {
+  const badgeCls =
+    accent === "violet"
+      ? "border-violet-400/30 bg-violet-500/10 text-violet-200"
+      : accent === "cyan"
+      ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-200"
+      : "border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200";
 
-  const networkLabel = CLUSTER === "mainnet-beta" ? "MAINNET" : "DEVNET";
-
-  const gameLabels = useMemo(() => {
-    // kommer fra API hvis det findes — ellers fallback
-    const api = players?.[0]?.gameLabels;
-    return {
-      flip: api?.flip ?? "Flip",
-      reaction: api?.reaction ?? "Reaction",
-      ttt: api?.ttt ?? "Tic Tac Toe",
-    };
-  }, [players]);
-
-  const rows = useMemo(() => {
-    return players.map((p) => {
-      const burned = Number(p.burnedAmount ?? 0);
-      const prog = getTierProgress(burned);
-
-      const winsByGame = p.winsByGame ?? { flip: 0, reaction: 0, ttt: 0 };
-
-      const winsShown =
-        gameFilter === "all"
-          ? Number(p.wins ?? 0)
-          : Number(winsByGame[gameFilter] ?? 0);
-
-      return {
-        ...p,
-        burnedAmount: burned,
-        tier: Number(p.tier ?? prog.tier),
-        _progressPct: prog.pct,
-        _nextTierBurn: prog.next,
-        _winsShown: winsShown,
-      };
-    });
-  }, [players, gameFilter]);
+  const hoverGlow =
+    accent === "violet"
+      ? "hover:shadow-[0_0_60px_rgba(168,85,247,0.16)]"
+      : accent === "cyan"
+      ? "hover:shadow-[0_0_60px_rgba(34,211,238,0.14)]"
+      : "hover:shadow-[0_0_60px_rgba(236,72,153,0.14)]";
 
   return (
-    <main className="min-h-screen bg-black text-white p-8 space-y-10">
-      <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-4xl font-bold">Solarena</h1>
-          <span className="text-xs px-2 py-1 rounded-full border border-gray-700 text-gray-300">
-            {networkLabel} • {TOKEN_SYMBOL}
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className={[
+        "group relative block overflow-hidden rounded-2xl",
+        "border border-white/10 bg-white/[0.018]",
+        "transition-all duration-200 ease-out",
+        "hover:-translate-y-0.5 hover:bg-white/[0.03]",
+        hoverGlow,
+      ].join(" ")}
+    >
+      <div className="pointer-events-none absolute inset-0 opacity-60">
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.01),rgba(0,0,0,0))]" />
+      </div>
+
+      <div className="relative p-3">
+        <div className="flex items-center justify-between">
+          <span className={["inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold", badgeCls].join(" ")}>
+            {badge}
           </span>
+          <span className="text-[11px] text-gray-500 group-hover:text-gray-300 transition">Open ↗</span>
         </div>
-        <p className="text-gray-400">Play. Compete. Burn. Climb.</p>
-      </header>
 
-      {/* ✅ BURN PANEL */}
-      <section className="space-y-3">
-        <h2 className="text-2xl font-semibold">Burn</h2>
-        <BurnPanel onBurned={load} />
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-2xl font-semibold">Leaderboard</h2>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">Game:</span>
-            <select
-              className="bg-gray-950 border border-gray-800 rounded-md px-3 py-2 text-sm"
-              value={gameFilter}
-              onChange={(e) => setGameFilter(e.target.value as GameKey)}
-            >
-              <option value="all">All</option>
-              <option value="flip">{gameLabels.flip}</option>
-              <option value="reaction">{gameLabels.reaction}</option>
-              <option value="ttt">{gameLabels.ttt}</option>
-            </select>
+        {/* Bigger image, less air */}
+        <div className="mt-2">
+          <div className="relative w-full h-[340px] sm:h-[420px]">
+            <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.06),rgba(0,0,0,0)_62%)]" />
+            <Image
+              src={imageSrc}
+              alt={title}
+              fill
+              className="object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.78)] transition-transform duration-200 group-hover:scale-[1.06]"
+            />
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border border-gray-800">
-            <thead>
-              <tr className="bg-gray-900">
-                <th className="p-3 text-left">Rank</th>
-                <th className="p-3 text-left">Wallet</th>
-                <th className="p-3 text-left">Tier</th>
-                <th className="p-3 text-center">Burned</th>
-                <th className="p-3 text-center">
-                  {gameFilter === "all" ? "Wins" : `${gameLabels[gameFilter]} Wins`}
-                </th>
-                <th className="p-3 text-center">Volume (SOL)</th>
-                <th className="p-3 text-center">Multiplier</th>
-                <th className="p-3 text-center">Points</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((p, i) => {
-                const next = (p as any)._nextTierBurn as number | null;
-                const burned = Number(p.burnedAmount ?? 0);
-                const remaining = next ? Math.max(0, next - burned) : 0;
-
-                return (
-                  <tr key={p.wallet} className="border-t border-gray-900 hover:bg-white/5 align-top">
-                    <td className="p-3">{i + 1}</td>
-
-                    <td className="p-3">
-                      <div className="font-medium">{shortWallet(p.wallet)}</div>
-
-                      <div className="text-xs text-gray-500 mt-1">
-                        {next ? (
-                          <>
-                            <span className="text-gray-200 font-semibold">{formatCompact(remaining)}</span>{" "}
-                            to next tier • unlock at {formatCompact(next)}
-                          </>
-                        ) : (
-                          <span className="text-gray-300 font-semibold">MAX tier reached</span>
-                        )}
-                      </div>
-
-                      <ProgressBar pct={Number((p as any)._progressPct ?? 0)} />
-                    </td>
-
-                    <td className="p-3">
-                      <TierBadge tier={p.tier ?? 0} />
-                    </td>
-
-                    <td className="p-3 text-center">{formatCompact(burned)}</td>
-                    <td className="p-3 text-center">{Number((p as any)._winsShown ?? 0)}</td>
-                    <td className="p-3 text-center">{Number(p.volumeSol ?? 0).toFixed(2)}</td>
-                    <td className="p-3 text-center">{Number(p.multiplier ?? 1).toFixed(2)}x</td>
-                    <td className="p-3 text-center">{Number(p.pointsTotal ?? 0).toFixed(0)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {rows.length === 0 && (
-            <p className="mt-6 text-gray-400">No players yet. Post a match to start the board.</p>
-          )}
+        <div className="mt-2 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-base sm:text-lg font-extrabold tracking-tight">{title}</div>
+            <div className="mt-0.5 truncate text-sm text-gray-400">{subtitle}</div>
+          </div>
+          <span className="shrink-0 text-sm font-semibold text-white/90 group-hover:text-white transition">Play ↗</span>
         </div>
-      </section>
+      </div>
 
-      <section className="space-y-3">
-        <h2 className="text-2xl font-semibold">Live activity</h2>
+      <span className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-white/0 group-hover:ring-white/10 transition" />
+    </a>
+  );
+}
 
-        <div className="border border-gray-800 rounded-lg overflow-hidden">
-          {events.length === 0 ? (
-            <div className="p-4 text-gray-400">No events yet.</div>
-          ) : (
-            <ul className="divide-y divide-gray-900">
-              {events.map((e) => (
-                <li key={e.id} className="p-4 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="text-sm text-gray-400">{new Date(e.createdAt).toLocaleString()}</div>
-                    <div className="font-medium">
-                      {shortWallet(e.wallet)} <span className="text-gray-400">{e.type}</span>
-                      {e.amountSol ? <span className="text-gray-400"> • {e.amountSol.toFixed(2)} SOL</span> : null}
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500">{e.meta ? e.meta.slice(0, 60) : ""}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
+export default function Page() {
+  return (
+    <main className="min-h-screen text-white">
+      <GlowBg />
+      <TopNav active="home" />
+
+      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 pb-16">
+        {/* HERO */}
+        <section className="mt-6 rounded-3xl border border-white/10 bg-white/5 overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.55)]">
+          <div className="relative p-6 sm:p-10">
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute -top-24 left-1/2 h-[420px] w-[820px] -translate-x-1/2 rounded-full blur-3xl bg-[radial-gradient(circle,rgba(168,85,247,0.15),rgba(34,211,238,0.07),rgba(0,0,0,0)_65%)]" />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-black/35 to-black/60" />
+            </div>
+
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs text-gray-200">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.35)]" />
+                On-chain PvP • Verifiable outcomes
+              </div>
+
+              <h1 className="mt-4 text-4xl sm:text-5xl font-extrabold tracking-tight">
+                Play. Compete.{" "}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-200 via-violet-200 to-fuchsia-200">
+                  Burn.
+                </span>{" "}
+                Climb.
+              </h1>
+
+              <p className="mt-3 max-w-2xl text-sm sm:text-base text-gray-200/80">
+                The fastest on-chain PvP hub on Solana. Skill, streaks, and volume — all tracked on the leaderboard.
+                Burn to unlock tiers and multipliers.
+              </p>
+
+              <div className="mt-6 flex flex-wrap items-center gap-3">
+                <PrimaryCta href="#games" label="Play now" />
+                <SecondaryButton href="/games" label="Open Games" />
+                <SecondaryButton href="/burn" label="Burn & unlock" />
+                <SecondaryButton href="/tokenomics" label="Tokenomics" />
+              </div>
+
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-gray-200/90">🏆 Win streaks → rank up</div>
+                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-gray-200/90">🔥 Burn token → points multiplier</div>
+                <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-gray-200/90">⚡ Fast PvP games, low friction</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* GAMES PREVIEW (scroll) */}
+        <section id="games" className="mt-10 scroll-mt-24">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold">Games</h2>
+              <p className="mt-1 text-sm text-gray-400">
+                Click. Play. Results hit the leaderboard.
+              </p>
+            </div>
+
+            <a
+              href="/games"
+              className="hidden sm:inline-flex items-center rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-gray-200 hover:bg-white/10 hover:border-white/15 transition"
+            >
+              Open Games →
+            </a>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <GamePoster
+              title="Flip"
+              subtitle="50/50. Fast. Addictive."
+              badge="CLASSIC"
+              href="https://filponsol.vercel.app/"
+              accent="violet"
+              imageSrc="/games/flip.png"
+            />
+            <GamePoster
+              title="Reaction Duel"
+              subtitle="Click faster. Prove skill."
+              badge="SKILL"
+              href="https://reaction-duel.vercel.app/"
+              accent="cyan"
+              imageSrc="/games/reaction.png"
+            />
+            <GamePoster
+              title="Tic Tac Toe"
+              subtitle="PvP mind games."
+              badge="PVP"
+              href="https://pvptictactoe.vercel.app/"
+              accent="fuchsia"
+              imageSrc="/games/ttt.png"
+            />
+          </div>
+        </section>
+
+        {/* LEADERBOARD PREVIEW (scroll) */}
+        <section className="mt-12">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm text-gray-400">
+              Live rankings <span className="text-gray-600">•</span> Updates every 8s
+            </div>
+            <a href="/leaderboard" className="text-sm text-gray-300 hover:text-white transition">
+              Open →
+            </a>
+          </div>
+
+          <LeaderboardSection compact showStats={false} showActivity={false} tableLimit={10} pollMs={8000} />
+
+          <div className="mt-4 flex justify-center">
+            <a
+              href="/leaderboard"
+              className="inline-flex items-center justify-center rounded-xl border border-violet-400/25 bg-violet-500/12 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-500/18 hover:border-violet-400/35 transition"
+            >
+              Open full leaderboard →
+            </a>
+          </div>
+        </section>
+
+        {/* BURN PREVIEW (scroll) */}
+        <section className="mt-14">
+          <BurnSection />
+        </section>
+
+        <footer className="mt-16 border-t border-white/10 pt-6 text-xs text-gray-500 flex items-center justify-between">
+          <span>© {new Date().getFullYear()} SolArena</span>
+          <div className="flex items-center gap-3">
+            <a className="hover:text-gray-300 transition" href="/tokenomics">Tokenomics</a>
+            <span className="text-gray-700">•</span>
+            <a className="hover:text-gray-300 transition" href="/transparency">Transparency</a>
+          </div>
+        </footer>
+      </div>
     </main>
   );
 }

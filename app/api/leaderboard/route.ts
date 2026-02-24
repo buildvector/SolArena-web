@@ -14,15 +14,26 @@ const GAME_LABEL: Record<GameKey, string> = {
   ttt: "Tic Tac Toe",
 };
 
+function normalizeEventType(type: string) {
+  // Support BOTH formats:
+  // - "flip_win"
+  // - "flip:win"
+  // - (keep other strings unchanged)
+  const t = String(type || "").trim();
+  return t.includes(":") ? t.replace(":", "_") : t;
+}
+
 function gameKeyFromEventType(type: string): { game: GameKey; result: "win" | "loss" } | null {
-  if (type === "flip_win") return { game: "flip", result: "win" };
-  if (type === "flip_loss") return { game: "flip", result: "loss" };
+  const norm = normalizeEventType(type);
 
-  if (type === "reaction_win") return { game: "reaction", result: "win" };
-  if (type === "reaction_loss") return { game: "reaction", result: "loss" };
+  if (norm === "flip_win") return { game: "flip", result: "win" };
+  if (norm === "flip_loss") return { game: "flip", result: "loss" };
 
-  if (type === "ttt_win") return { game: "ttt", result: "win" };
-  if (type === "ttt_loss") return { game: "ttt", result: "loss" };
+  if (norm === "reaction_win") return { game: "reaction", result: "win" };
+  if (norm === "reaction_loss") return { game: "reaction", result: "loss" };
+
+  if (norm === "ttt_win") return { game: "ttt", result: "win" };
+  if (norm === "ttt_loss") return { game: "ttt", result: "loss" };
 
   return null;
 }
@@ -35,18 +46,33 @@ export async function GET() {
 
   const wallets = players.map((p) => p.wallet);
 
-  // Hent kun relevante win/loss events for de 50 wallets
+  // Pull both legacy underscore + current colon formats (safe, backwards compatible)
+  const allowedTypes = [
+    // underscore
+    "flip_win",
+    "flip_loss",
+    "reaction_win",
+    "reaction_loss",
+    "ttt_win",
+    "ttt_loss",
+    // colon
+    "flip:win",
+    "flip:loss",
+    "reaction:win",
+    "reaction:loss",
+    "ttt:win",
+    "ttt:loss",
+  ];
+
   const events = await prisma.event.findMany({
     where: {
       wallet: { in: wallets },
-      type: {
-        in: ["flip_win", "flip_loss", "reaction_win", "reaction_loss", "ttt_win", "ttt_loss"],
-      },
+      type: { in: allowedTypes },
     },
     select: { wallet: true, type: true },
   });
 
-  // Aggreger wins/losses pr wallet pr game
+  // Aggregate wins/losses per wallet per game
   const map = new Map<
     string,
     {
@@ -84,10 +110,10 @@ export async function GET() {
     return {
       ...p,
       tier,
-      multiplier, // override fra burn (source of truth)
+      multiplier, // source of truth from burn
       winsByGame: agg.winsByGame,
       lossesByGame: agg.lossesByGame,
-      gameLabels: GAME_LABEL, // så UI kan vise "Tic Tac Toe" uden at hardcode
+      gameLabels: GAME_LABEL,
     };
   });
 
