@@ -14,7 +14,7 @@ function fmtErr(e: any) {
       ? e.message
       : typeof e === "string"
       ? e
-      : "Unknown error";
+      : "Transaction failed";
   return msg.length > 180 ? msg.slice(0, 180) + "…" : msg;
 }
 
@@ -32,7 +32,7 @@ export default function BurnButton({
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  const mint = TOKEN_MINT; // may be null
+  const mint = TOKEN_MINT;
   const decimals = Number(TOKEN_DECIMALS ?? 9);
 
   const canBurn = useMemo(() => {
@@ -47,32 +47,31 @@ export default function BurnButton({
     setOk(null);
 
     if (!publicKey) return setErr("Connect wallet first.");
-    if (!mint) return setErr("TOKEN_MINT is not set. Add NEXT_PUBLIC_TOKEN_MINT in .env.local / Vercel env.");
-    if (!Number.isFinite(amount) || amount <= 0) return setErr("Enter a valid amount > 0.");
+    if (!mint) return setErr("Burn unavailable.");
+    if (!Number.isFinite(amount) || amount <= 0)
+      return setErr("Enter valid amount.");
 
     try {
       setLoading(true);
 
-      // Build burn tx (burnChecked expects base units amount)
       const ata = await getAssociatedTokenAddress(mint, publicKey);
-      const base = BigInt(Math.floor(amount)) * BigInt(10) ** BigInt(decimals);
+      const base =
+        BigInt(Math.floor(amount)) * BigInt(10) ** BigInt(decimals);
 
       const tx = new Transaction().add(
         createBurnCheckedInstruction(
-          ata, // token account
-          mint, // mint
-          publicKey, // owner/authority
-          base, // amount base units
-          decimals // decimals
+          ata,
+          mint,
+          publicKey,
+          base,
+          decimals
         )
       );
 
-      // Send & confirm
       const sig = await sendTransaction(tx, connection);
       const conf = await connection.confirmTransaction(sig, "confirmed");
-      if (conf.value.err) throw new Error("Transaction failed on-chain.");
+      if (conf.value.err) throw new Error("On-chain error.");
 
-      // Notify backend (this will verify burn by parsing tx)
       const r = await fetch("/api/burn", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -85,9 +84,9 @@ export default function BurnButton({
       });
 
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "Burn API error.");
+      if (!r.ok) throw new Error(j?.error || "API error.");
 
-      setOk(`Burned ${Math.floor(amount)} ${TOKEN_SYMBOL}.`);
+      setOk(`Burn successful.`);
       onBurned?.(Math.floor(amount));
     } catch (e: any) {
       setErr(fmtErr(e));
@@ -98,13 +97,6 @@ export default function BurnButton({
 
   return (
     <div className="space-y-2">
-      {!mint ? (
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-          Missing <span className="font-semibold">NEXT_PUBLIC_TOKEN_MINT</span>. Burn will work after you set the mint
-          address (Pump.fun mint) in env.
-        </div>
-      ) : null}
-
       <button
         type="button"
         onClick={handleBurn}
@@ -119,17 +111,17 @@ export default function BurnButton({
         {loading ? "Burning…" : `Burn ${Math.floor(amount || 0)} ${TOKEN_SYMBOL}`}
       </button>
 
-      {err ? (
+      {err && (
         <div className="text-xs text-rose-300 border border-rose-500/15 bg-rose-500/10 rounded-xl px-3 py-2">
           {err}
         </div>
-      ) : null}
+      )}
 
-      {ok ? (
+      {ok && (
         <div className="text-xs text-emerald-200 border border-emerald-500/15 bg-emerald-500/10 rounded-xl px-3 py-2">
           {ok}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
