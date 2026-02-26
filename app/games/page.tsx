@@ -1,3 +1,4 @@
+// app/games/page.tsx
 import Image from "next/image";
 import TopNav from "@/app/components/TopNav";
 
@@ -55,27 +56,40 @@ function GamePoster({
         hoverGlow,
       ].join(" ")}
     >
+      {/* sheen */}
       <div className="pointer-events-none absolute inset-0 opacity-60">
         <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.05),rgba(255,255,255,0.01),rgba(0,0,0,0))]" />
       </div>
 
       <div className="relative p-3">
         <div className="flex items-center justify-between">
-          <span className={["inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold", badgeCls].join(" ")}>
+          <span
+            className={[
+              "inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-semibold",
+              badgeCls,
+            ].join(" ")}
+          >
             {badge}
           </span>
           <span className="text-[11px] text-gray-500 group-hover:text-gray-300 transition">Open ↗</span>
         </div>
 
+        {/* IMAGE ZONE (robust layering) */}
         <div className="mt-2">
-          <div className="relative w-full h-[380px] sm:h-[520px]">
-            <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.06),rgba(0,0,0,0)_62%)]" />
-            <Image
-              src={imageSrc}
-              alt={title}
-              fill
-              className="object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.78)] transition-transform duration-200 group-hover:scale-[1.06]"
-            />
+          <div className="relative w-full h-[360px] sm:h-[520px] overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+            {/* soft vignette UNDER image */}
+            <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.08),rgba(0,0,0,0)_62%)]" />
+            {/* image ABOVE overlays */}
+            <div className="absolute inset-0 z-10">
+              <Image
+                src={imageSrc}
+                alt={title}
+                fill
+                sizes="(max-width: 768px) 100vw, 33vw"
+                unoptimized
+                className="object-contain drop-shadow-[0_28px_70px_rgba(0,0,0,0.78)] transition-transform duration-200 group-hover:scale-[1.06]"
+              />
+            </div>
           </div>
         </div>
 

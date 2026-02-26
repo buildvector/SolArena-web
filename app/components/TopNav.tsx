@@ -10,7 +10,7 @@ type NavKey =
   | "home"
   | "games"
   | "leaderboard"
-  | "burn"
+  | "brun"
   | "tokenomics"
   | "transparency";
 
@@ -23,7 +23,7 @@ export default function TopNav({ active }: { active?: NavKey }) {
     if (active) return active;
     if (pathname === "/") return "home";
     if (pathname.startsWith("/leaderboard")) return "leaderboard";
-    if (pathname.startsWith("/burn")) return "burn";
+    if (pathname.startsWith("/brun")) return "brun";
     if (pathname.startsWith("/tokenomics")) return "tokenomics";
     if (pathname.startsWith("/transparency")) return "transparency";
     return "home";
@@ -123,8 +123,8 @@ export default function TopNav({ active }: { active?: NavKey }) {
                 Leaderboard
               </Link>
 
-              <Link href="/burn" className={navItem(current === "burn")}>
-                Burn
+              <Link href="/brun" className={navItem(current === "brun")}>
+                Brun
               </Link>
 
               {/* More */}
@@ -162,7 +162,7 @@ export default function TopNav({ active }: { active?: NavKey }) {
                     >
                       <div className="font-semibold">Tokenomics</div>
                       <div className="text-xs text-gray-500 mt-0.5">
-                        Utility loop, burn → multiplier
+                        Utility loop, brun → multiplier
                       </div>
                     </Link>
 
@@ -182,7 +182,7 @@ export default function TopNav({ active }: { active?: NavKey }) {
                     >
                       <div className="font-semibold">Transparency</div>
                       <div className="text-xs text-gray-500 mt-0.5">
-                        Verify burns, fees, leaderboard data
+                        Verify bruns, fees, leaderboard data
                       </div>
                     </Link>
                   </div>
