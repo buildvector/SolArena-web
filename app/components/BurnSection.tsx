@@ -88,9 +88,9 @@ export default function BurnSection() {
 
             {!mintSet ? (
               <div className="mt-3 text-xs text-gray-500">
-                Når du launcher på Pump.fun: kopier <span className="text-gray-200 font-semibold">mint address</span> og
-                sæt den som <span className="text-gray-200 font-semibold">NEXT_PUBLIC_TOKEN_MINT</span>. Så virker burn
-                automatisk.
+                <span className="text-gray-200 font-semibold"></span> 
+                 <span className="text-gray-200 font-semibold"></span>. Så virker burn
+                
               </div>
             ) : null}
           </div>
