@@ -176,8 +176,9 @@ export default function Page() {
                 </div>
 
                 <div className="relative">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1 text-xs text-rose-200">
-                    <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.45)] animate-pulse" />
+                  {/* ✅ CHANGED: Season badge from red -> green (online feel) */}
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+                    <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.45)] animate-pulse" />
                     {season?.name ?? "SEASON"} • {season?.tagline ?? "WAR"}
                   </div>
 
