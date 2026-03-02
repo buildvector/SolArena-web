@@ -1,6 +1,7 @@
 // app/page.tsx
 "use client";
 
+import { useMemo, useState } from "react";
 import TopNav from "@/app/components/TopNav";
 import BurnSection from "@/app/components/BurnSection";
 import LeaderboardSection from "@/app/components/LeaderboardSection";
@@ -9,6 +10,7 @@ import SeasonCountdown from "@/app/components/SeasonCountdown";
 import HallOfFameTeaser from "@/app/components/HallOfFameTeaser";
 import HomeActivityClient from "@/app/components/HomeActivityClient";
 import { getSeasonConfig } from "@/lib/season";
+import { TOKEN_MINT, TOKEN_SYMBOL, SOLANA_CLUSTER } from "@/lib/token-config";
 
 function GlowBg() {
   return (
@@ -50,6 +52,130 @@ function PrimaryCta({ href, label }: { href: string; label: string }) {
       <span className="mr-2">{label}</span>
       <span className="opacity-70 group-hover:opacity-100 transition">→</span>
     </a>
+  );
+}
+
+function shortWallet(w: string) {
+  if (!w) return "";
+  return w.length > 10 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
+}
+
+function solscanMintUrl(mint: string) {
+  const base = `https://solscan.io/token/${mint}`;
+  if (SOLANA_CLUSTER === "devnet") return `${base}?cluster=devnet`;
+  return base;
+}
+
+function birdeyeMintUrl(mint: string) {
+  // Birdeye supports ?chain=solana, link is stable
+  return `https://birdeye.so/token/${mint}?chain=solana`;
+}
+
+function ContractCard() {
+  const tokenName =
+    (process.env.NEXT_PUBLIC_TOKEN_NAME ?? "KRAVOX").trim() || "KRAVOX";
+
+  const mint = TOKEN_MINT?.toBase58() ?? "";
+  const [copied, setCopied] = useState(false);
+
+  const canCopy = Boolean(mint);
+
+  async function copyMint() {
+    if (!mint) return;
+    try {
+      await navigator.clipboard.writeText(mint);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-2xl border border-emerald-400/15 bg-black/35 backdrop-blur-md shadow-[0_0_80px_rgba(0,0,0,0.55)] overflow-hidden">
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-100">
+                <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.45)]" />
+                TOKEN
+              </span>
+
+              <span className="text-xs text-gray-400">
+                {tokenName} <span className="text-gray-600">•</span> Ticker:{" "}
+                <span className="text-gray-200 font-semibold">{TOKEN_SYMBOL}</span>
+              </span>
+            </div>
+
+            <div className="mt-3">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                Contract (Mint)
+              </div>
+
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <code className="max-w-full truncate rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-gray-200">
+                  {mint ? shortWallet(mint) : "TBA"}
+                </code>
+
+                <button
+                  onClick={copyMint}
+                  disabled={!canCopy}
+                  className={[
+                    "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold",
+                    "border border-white/10 bg-white/5 text-gray-200",
+                    "hover:bg-white/10 hover:border-white/15 transition-all",
+                    !canCopy ? "opacity-50 cursor-not-allowed" : "",
+                  ].join(" ")}
+                  title={mint ? "Copy mint address" : "Mint not set yet"}
+                >
+                  {copied ? "Copied ✓" : "Copy"}
+                </button>
+
+                {mint ? (
+                  <>
+                    <a
+                      href={solscanMintUrl(mint)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-xs text-gray-300 hover:text-white transition"
+                    >
+                      Solscan ↗
+                    </a>
+                    <span className="text-gray-700">•</span>
+                    <a
+                      href={birdeyeMintUrl(mint)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-xs text-gray-300 hover:text-white transition"
+                    >
+                      Birdeye ↗
+                    </a>
+                  </>
+                ) : (
+                  <span className="text-xs text-gray-500">
+                    Set <span className="text-gray-300">NEXT_PUBLIC_TOKEN_MINT</span> to show links
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-2 text-xs text-gray-500">
+                Tip: traders look for the mint first. Keep this visible + copyable.
+              </div>
+            </div>
+          </div>
+
+          <div className="shrink-0">
+            <div className="rounded-xl border border-white/10 bg-black/35 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">Network</div>
+              <div className="mt-0.5 text-sm font-extrabold text-white">
+                {SOLANA_CLUSTER === "devnet" ? "DEVNET" : "MAINNET"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -133,9 +259,7 @@ function GamePoster({
             <div className="truncate text-base sm:text-lg font-extrabold tracking-tight">
               {title}
             </div>
-            <div className="mt-0.5 truncate text-sm text-gray-400">
-              {subtitle}
-            </div>
+            <div className="mt-0.5 truncate text-sm text-gray-400">{subtitle}</div>
           </div>
           <span className="shrink-0 text-sm font-semibold text-white/90 group-hover:text-white transition">
             Play ↗
@@ -150,6 +274,7 @@ function GamePoster({
 
 export default function Page() {
   const season = getSeasonConfig(); // { name/tagline/startIso/endIso/siteUrl ... } hos dig
+  useMemo(() => season, [season]); // keep lint calm if you tweak later
 
   return (
     <main className="min-h-screen text-white">
@@ -194,6 +319,9 @@ export default function Page() {
                     Burn. Compete. Dominate. Every win is recorded. Every burn is verifiable.
                   </p>
 
+                  {/* ✅ NEW: Contract/Mint card (env-driven) */}
+                  <ContractCard />
+
                   <div className="mt-5">
                     <SeasonCountdown endIso={season?.endIso ?? null} />
                   </div>
@@ -226,7 +354,9 @@ export default function Page() {
               <div className="flex items-end justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold">Games</h2>
-                  <p className="mt-1 text-sm text-gray-400">Click. Play. Results hit the leaderboard.</p>
+                  <p className="mt-1 text-sm text-gray-400">
+                    Click. Play. Results hit the leaderboard.
+                  </p>
                 </div>
 
                 <a
@@ -271,12 +401,21 @@ export default function Page() {
                 <div className="text-sm text-gray-400">
                   Live rankings <span className="text-gray-600">•</span> Updates every 8s
                 </div>
-                <a href="/leaderboard" className="text-sm text-gray-300 hover:text-white transition">
+                <a
+                  href="/leaderboard"
+                  className="text-sm text-gray-300 hover:text-white transition"
+                >
                   Open →
                 </a>
               </div>
 
-              <LeaderboardSection compact showStats={false} showActivity={false} tableLimit={10} pollMs={8000} />
+              <LeaderboardSection
+                compact
+                showStats={false}
+                showActivity={false}
+                tableLimit={10}
+                pollMs={8000}
+              />
 
               <div className="mt-4 flex justify-center">
                 <a
@@ -299,7 +438,9 @@ export default function Page() {
             <div className="lg:sticky lg:top-[84px] space-y-4">
               <div className="rounded-3xl border border-white/10 bg-white/5 overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.45)]">
                 <div className="p-4 sm:p-5">
-                  <div className="text-sm font-semibold text-gray-200">Hall of Fame (Top 3)</div>
+                  <div className="text-sm font-semibold text-gray-200">
+                    Hall of Fame (Top 3)
+                  </div>
                   <div className="mt-3">
                     <HallOfFameTeaser />
                   </div>
