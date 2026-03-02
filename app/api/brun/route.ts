@@ -39,30 +39,39 @@ type ParsedBurn = {
 function extractBurnsFromParsedTx(tx: any): ParsedBurn[] {
   const out: ParsedBurn[] = [];
 
-  const pushIfBurn = (ix: any) => {
-    if (!ix || ix.program !== "spl-token") return;
-    const parsed = ix.parsed;
-    if (!parsed || (parsed.type !== "burn" && parsed.type !== "burnChecked")) return;
+  const isTokenProgram = (p: string) =>
+    p === "spl-token" || p === "spl-token-2022";
 
-    const info = parsed.info || {};
-    const authority = String(info.authority || info.owner || "");
+  const pushIfBurn = (ix: any) => {
+    if (!ix) return;
+
+    const program = String(ix.program ?? "");
+    if (!isTokenProgram(program)) return;
+
+    const parsed = ix.parsed;
+    const type = String(parsed?.type ?? "");
+    if (type !== "burn" && type !== "burnChecked") return;
+
+    const info = parsed?.info ?? {};
+    const authority = String(
+      info.authority || info.owner || info.multisigAuthority || ""
+    );
     const mint = String(info.mint || "");
     const amountStr = String(info.amount ?? "");
 
     if (!authority || !mint || !amountStr) return;
 
-    let amountBaseUnits: bigint;
     try {
-      amountBaseUnits = BigInt(amountStr);
+      out.push({ authority, mint, amountBaseUnits: BigInt(amountStr) });
     } catch {
       return;
     }
-
-    out.push({ authority, mint, amountBaseUnits });
   };
 
+  // top-level parsed instructions
   for (const ix of tx?.transaction?.message?.instructions ?? []) pushIfBurn(ix);
 
+  // inner instructions (often where token burns show up)
   for (const inner of tx?.meta?.innerInstructions ?? []) {
     for (const ix of inner?.instructions ?? []) pushIfBurn(ix);
   }
