@@ -4,8 +4,8 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { Transaction } from "@solana/web3.js";
 
-import BurnButton from "@/app/components/BurnButton";
 import { TOKEN_SYMBOL } from "@/lib/token-config";
 
 const WalletMultiButton = dynamic(
@@ -15,8 +15,87 @@ const WalletMultiButton = dynamic(
 );
 
 export default function BurnSection() {
-  const { connected, publicKey } = useWallet();
+  const wallet = useWallet();
+  const { connected, publicKey } = wallet;
+
   const [amount, setAmount] = useState<number>(10000);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<string>("");
+
+  async function handleBurn() {
+    try {
+      if (!publicKey || !wallet.signTransaction) {
+        alert("Connect wallet first");
+        return;
+      }
+
+      setLoading(true);
+      setStatus("Building transaction...");
+
+      // 1️⃣ Build unsigned tx on server
+      const r1 = await fetch("/api/brun/tx", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          wallet: publicKey.toBase58(),
+          amount,
+        }),
+      });
+
+      const j1 = await r1.json();
+      if (!r1.ok) throw new Error(j1.error || "tx build failed");
+
+      const bytes = Uint8Array.from(atob(j1.tx), (c) =>
+        c.charCodeAt(0)
+      );
+      const tx = Transaction.from(bytes);
+
+      setStatus("Signing in wallet...");
+
+      // 2️⃣ Sign in Phantom
+      const signed = await wallet.signTransaction(tx);
+      const signedB64 = btoa(
+        String.fromCharCode(...signed.serialize())
+      );
+
+      setStatus("Sending transaction...");
+
+      // 3️⃣ Send via server
+      const r2 = await fetch("/api/brun/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          signedTx: signedB64,
+        }),
+      });
+
+      const j2 = await r2.json();
+      if (!r2.ok) throw new Error(j2.error || "send failed");
+
+      setStatus("Verifying burn...");
+
+      // 4️⃣ Verify + update DB
+      const r3 = await fetch("/api/brun", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          wallet: publicKey.toBase58(),
+          signature: j2.signature,
+          amount,
+        }),
+      });
+
+      const j3 = await r3.json();
+      if (!r3.ok) throw new Error(j3.error || "verify failed");
+
+      setStatus("🔥 Burn successful!");
+    } catch (err: any) {
+      console.error(err);
+      setStatus("❌ " + (err.message || "Burn failed"));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/5 overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.45)]">
@@ -75,7 +154,21 @@ export default function BurnSection() {
               Action
             </div>
             <div className="mt-2">
-              <BurnButton amount={amount} />
+              <button
+                onClick={handleBurn}
+                disabled={!connected || loading || amount <= 0}
+                className="w-full rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-3 text-sm font-bold transition"
+              >
+                {loading
+                  ? "Processing..."
+                  : `Burn ${amount} ${TOKEN_SYMBOL}`}
+              </button>
+
+              {status && (
+                <div className="mt-3 text-xs text-gray-400">
+                  {status}
+                </div>
+              )}
             </div>
           </div>
         </div>
