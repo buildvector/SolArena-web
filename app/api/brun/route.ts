@@ -1,4 +1,4 @@
-// app/api/burn/route.ts
+// app/api/brun/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -30,12 +30,64 @@ function jsonOk(data: any) {
   return NextResponse.json(data);
 }
 
+/**
+ * Robust burn detection: use token balance diffs.
+ * For a burn, your token account balance decreases.
+ */
+function burnedBaseUnitsFromTokenBalanceDiff(
+  tx: any,
+  wallet: string,
+  mint: string
+): bigint {
+  const pre = tx?.meta?.preTokenBalances ?? [];
+  const post = tx?.meta?.postTokenBalances ?? [];
+
+  // map accountIndex -> { owner, mint, amount }
+  const preMap = new Map<number, { owner?: string; mint?: string; amount: bigint }>();
+  for (const b of pre) {
+    const idx = Number(b.accountIndex);
+    const owner = b.owner ? String(b.owner) : undefined;
+    const m = b.mint ? String(b.mint) : undefined;
+    const amtStr = b.uiTokenAmount?.amount ?? "0";
+    let amt = BigInt(0);
+    try { amt = BigInt(String(amtStr)); } catch {}
+    preMap.set(idx, { owner, mint: m, amount: amt });
+  }
+
+  let sum = BigInt(0);
+
+  for (const b of post) {
+    const idx = Number(b.accountIndex);
+    const owner = b.owner ? String(b.owner) : undefined;
+    const m = b.mint ? String(b.mint) : undefined;
+    if (m !== mint) continue;
+
+    // If owner is present, enforce match to wallet (burn authority)
+    if (owner && owner !== wallet) continue;
+
+    const postAmtStr = b.uiTokenAmount?.amount ?? "0";
+    let postAmt = BigInt(0);
+    try { postAmt = BigInt(String(postAmtStr)); } catch {}
+
+    const preRec = preMap.get(idx);
+    const preAmt = preRec?.amount ?? BigInt(0);
+
+    // burned amount is decrease
+    if (preAmt > postAmt) sum += (preAmt - postAmt);
+  }
+
+  return sum;
+}
+
 type ParsedBurn = {
   authority: string;
   mint: string;
-  amountBaseUnits: bigint; // burn amount in base units
+  amountBaseUnits: bigint;
 };
 
+/**
+ * Fallback (less reliable): parse burn instructions if they appear.
+ */
 function extractBurnsFromParsedTx(tx: any): ParsedBurn[] {
   const out: ParsedBurn[] = [];
 
@@ -53,9 +105,7 @@ function extractBurnsFromParsedTx(tx: any): ParsedBurn[] {
     if (type !== "burn" && type !== "burnChecked") return;
 
     const info = parsed?.info ?? {};
-    const authority = String(
-      info.authority || info.owner || info.multisigAuthority || ""
-    );
+    const authority = String(info.authority || info.owner || info.multisigAuthority || "");
     const mint = String(info.mint || "");
     const amountStr = String(info.amount ?? "");
 
@@ -68,10 +118,8 @@ function extractBurnsFromParsedTx(tx: any): ParsedBurn[] {
     }
   };
 
-  // top-level parsed instructions
   for (const ix of tx?.transaction?.message?.instructions ?? []) pushIfBurn(ix);
 
-  // inner instructions (often where token burns show up)
   for (const inner of tx?.meta?.innerInstructions ?? []) {
     for (const ix of inner?.instructions ?? []) pushIfBurn(ix);
   }
@@ -126,7 +174,7 @@ export async function POST(req: Request) {
     return jsonErr("NEXT_PUBLIC_TOKEN_MINT is not set (cannot verify burn)", 500);
   }
 
-  // Prevent replay (same tx counted twice)
+  // Prevent replay
   const already = await prisma.event.findFirst({
     where: { type: "burn", meta: { contains: signature } },
   });
@@ -142,19 +190,23 @@ export async function POST(req: Request) {
   if (!tx) return jsonErr("transaction not found (wrong signature or RPC)", 404);
   if (tx.meta?.err) return jsonErr("transaction failed on-chain (meta.err)", 400);
 
-  const burns = extractBurnsFromParsedTx(tx);
-  if (burns.length === 0) return jsonErr("no SPL burn instruction found in transaction", 400);
-
   const mintPk = TOKEN_MINT.toBase58();
 
-  // match wallet + mint
-  const matches = burns.filter((b) => b.authority === wallet && b.mint === mintPk);
-  if (matches.length === 0) {
-    return jsonErr("no burn found for this wallet + mint in tx", 400);
+  // 1) Preferred: balance diff
+  let sumBase = burnedBaseUnitsFromTokenBalanceDiff(tx, wallet, mintPk);
+
+  // 2) Fallback: instruction parsing
+  if (sumBase === BigInt(0)) {
+    const burns = extractBurnsFromParsedTx(tx);
+    const matches = burns.filter((b) => b.authority === wallet && b.mint === mintPk);
+    if (matches.length > 0) {
+      sumBase = matches.reduce((acc, b) => acc + b.amountBaseUnits, BigInt(0));
+    }
   }
 
-  // sum burns (base units)
-  const sumBase = matches.reduce((acc, b) => acc + b.amountBaseUnits, BigInt(0));
+  if (sumBase === BigInt(0)) {
+    return jsonErr("no SPL burn detected for this wallet + mint in transaction", 400);
+  }
 
   // base units -> whole tokens
   const decimals = Number(TOKEN_DECIMALS ?? 9);
@@ -194,6 +246,7 @@ export async function POST(req: Request) {
         burnedWhole,
         burnedBaseUnits: sumBase.toString(),
         decimals,
+        method: "token_balance_diff",
       }),
     },
   });
