@@ -160,7 +160,7 @@ function ContractCard() {
               </div>
 
               <div className="mt-2 text-xs text-gray-500">
-                Tip: traders look for the mint first. Keep this visible + copyable.
+                
               </div>
             </div>
           </div>
