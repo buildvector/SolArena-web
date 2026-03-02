@@ -54,6 +54,7 @@ export default function LiveStatsBar({
         topWallet: j.topWallet ?? null,
         topPoints: Number(j.topPoints ?? 0),
       });
+
       setLoading(false);
     } catch {
       setLoading(false);
@@ -70,57 +71,77 @@ export default function LiveStatsBar({
   const endsIn = useMemo(() => formatEndsIn(seasonEndIso), [seasonEndIso]);
 
   return (
-    <div className="rounded-2xl border border-rose-500/18 bg-black/40 backdrop-blur-xl shadow-[0_0_80px_rgba(0,0,0,0.65)] overflow-hidden">
+    <div className="rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-[0_0_80px_rgba(0,0,0,0.65)] overflow-hidden">
       <div className="relative px-4 py-3 sm:px-5 sm:py-4">
-        <div className="pointer-events-none absolute inset-0 opacity-70">
-          <div className="absolute -top-14 left-1/2 h-32 w-[620px] -translate-x-1/2 blur-3xl bg-[radial-gradient(circle,rgba(244,63,94,0.16),rgba(168,85,247,0.12),rgba(34,211,238,0.06),rgba(0,0,0,0)_65%)]" />
-          <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
+        {/* subtle war glow */}
+        <div className="pointer-events-none absolute inset-0 opacity-60">
+          <div className="absolute -top-14 left-1/2 h-32 w-[620px] -translate-x-1/2 blur-3xl bg-[radial-gradient(circle,rgba(34,211,238,0.12),rgba(168,85,247,0.10),rgba(0,0,0,0)_65%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02),rgba(0,0,0,0))]" />
         </div>
 
         <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* LEFT SIDE */}
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-2 rounded-full border border-rose-500/25 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200">
-              <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.45)] animate-pulse" />
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-100">
+              <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.45)] animate-pulse" />
               LIVE WAR STATS
             </span>
 
-            <span className="text-xs text-gray-400">{loading ? "Updating…" : "Synced"}</span>
+            <span className="text-xs text-gray-400">
+              {loading ? "Updating…" : "Synced"}
+            </span>
           </div>
 
+          {/* STATS GRID */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
             <div className="rounded-xl border border-white/10 bg-black/35 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Burned</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                Burned
+              </div>
               <div className="mt-0.5 text-sm font-extrabold text-white">
                 🔥 {stats ? formatCompact(stats.totalBurned) : "—"} {TOKEN_SYMBOL}
               </div>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/35 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Games</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                Games
+              </div>
               <div className="mt-0.5 text-sm font-extrabold text-white">
                 🎮 {stats ? formatCompact(stats.totalGames) : "—"}
               </div>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/35 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Volume</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                Volume
+              </div>
               <div className="mt-0.5 text-sm font-extrabold text-white">
                 💰 {stats ? stats.totalVolumeSol.toFixed(2) : "—"} SOL
               </div>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-black/35 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500">Season ends</div>
-              <div className="mt-0.5 text-sm font-extrabold text-white">🏆 {endsIn ?? "—"}</div>
+              <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                Season ends
+              </div>
+              <div className="mt-0.5 text-sm font-extrabold text-white">
+                🏆 {endsIn ?? "—"}
+              </div>
             </div>
           </div>
 
+          {/* TOP PLAYER */}
           {stats?.topWallet ? (
             <div className="hidden xl:flex items-center gap-2 text-xs text-gray-400">
               <span className="text-gray-500">Top:</span>
-              <span className="font-semibold text-gray-200">{shortWallet(stats.topWallet)}</span>
+              <span className="font-semibold text-gray-200">
+                {shortWallet(stats.topWallet)}
+              </span>
               <span className="text-gray-600">•</span>
-              <span className="text-gray-300">{Math.floor(stats.topPoints)} pts</span>
+              <span className="text-gray-300">
+                {Math.floor(stats.topPoints)} pts
+              </span>
             </div>
           ) : null}
         </div>
