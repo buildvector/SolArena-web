@@ -4,10 +4,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction } from "@solana/web3.js";
-import { getAssociatedTokenAddress, createBurnCheckedInstruction } from "@solana/spl-token";
+import { Transaction } from "@solana/web3.js";
+import {
+  getAssociatedTokenAddress,
+  createBurnCheckedInstruction,
+} from "@solana/spl-token";
 
 import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
+
+async function readJsonSafe(res: Response) {
+  const text = await res.text().catch(() => "");
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 200) };
+  }
+}
 
 export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
   const { connection } = useConnection();
@@ -28,7 +41,9 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
     setMsg("");
 
     if (!mint) {
-      setErr("TOKEN_MINT is not set yet. Set NEXT_PUBLIC_TOKEN_MINT in .env.local after launch.");
+      setErr(
+        "TOKEN_MINT is not set yet. Set NEXT_PUBLIC_TOKEN_MINT in .env.local after launch."
+      );
       return;
     }
     if (!publicKey) {
@@ -47,15 +62,13 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       const decimals = Number(TOKEN_DECIMALS ?? 9);
       const baseUnits = BigInt(whole) * (BigInt(10) ** BigInt(decimals));
 
-      // Associated Token Account for user + mint
       const ata = await getAssociatedTokenAddress(mint, publicKey);
 
-      // burnChecked requires base units and decimals
       const ix = createBurnCheckedInstruction(
-        ata,            // account
-        mint,           // mint
-        publicKey,      // owner/authority
-        baseUnits,      // amount (base units)
+        ata,
+        mint,
+        publicKey,
+        baseUnits,
         decimals
       );
 
@@ -69,9 +82,11 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       if (conf.value.err) throw new Error("Transaction failed during confirmation");
 
       setMsg("Validating burn on backend...");
-      const res = await fetch("/api/burn", {
+      // ✅ FIX: endpoint is /api/brun
+      const res = await fetch("/api/brun", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({
           wallet: publicKey.toBase58(),
           signature: sig,
@@ -79,12 +94,17 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = await readJsonSafe(res);
       if (!res.ok) {
         throw new Error(data?.error || `Burn verify failed (status ${res.status})`);
       }
 
-      setMsg(`✅ Burn counted: ${whole.toLocaleString()} ${TOKEN_SYMBOL || "TOKEN"} (tx: ${sig.slice(0, 8)}...)`);
+      setMsg(
+        `✅ Burn counted: ${whole.toLocaleString()} ${TOKEN_SYMBOL || "TOKEN"} (tx: ${sig.slice(
+          0,
+          8
+        )}...)`
+      );
       onBurned?.();
     } catch (e: any) {
       setErr(e?.message || "Burn failed");
@@ -98,7 +118,9 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="font-semibold">Burn {TOKEN_SYMBOL || "TOKEN"}</div>
-          <div className="text-sm text-gray-400">On-chain burn (burnChecked) → tier & multiplier unlock</div>
+          <div className="text-sm text-gray-400">
+            On-chain burn (burnChecked) → tier & multiplier unlock
+          </div>
         </div>
 
         {/* Avoid hydration mismatch */}
@@ -127,7 +149,10 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
         </button>
 
         <div className="text-xs text-gray-500">
-          Mint: {mint ? `${mint.toBase58().slice(0, 6)}...${mint.toBase58().slice(-4)}` : "not set"}
+          Mint:{" "}
+          {mint
+            ? `${mint.toBase58().slice(0, 6)}...${mint.toBase58().slice(-4)}`
+            : "not set"}
           <br />
           Decimals: {String(TOKEN_DECIMALS ?? 9)}
         </div>
@@ -138,8 +163,8 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
 
       {!mint ? (
         <div className="text-xs text-amber-200/90 border border-amber-500/30 bg-amber-500/10 rounded p-3">
-          TOKEN_MINT is not set yet. That’s fine pre-launch. After launch, set <code>NEXT_PUBLIC_TOKEN_MINT</code> to your
-          mint (base58) and reload.
+          TOKEN_MINT is not set yet. That’s fine pre-launch. After launch, set{" "}
+          <code>NEXT_PUBLIC_TOKEN_MINT</code> to your mint (base58) and reload.
         </div>
       ) : null}
     </div>

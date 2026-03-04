@@ -4,7 +4,10 @@
 import { useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Transaction } from "@solana/web3.js";
-import { getAssociatedTokenAddress, createBurnCheckedInstruction } from "@solana/spl-token";
+import {
+  getAssociatedTokenAddress,
+  createBurnCheckedInstruction,
+} from "@solana/spl-token";
 
 import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
 
@@ -16,6 +19,17 @@ function fmtErr(e: any) {
       ? e
       : "Transaction failed";
   return msg.length > 180 ? msg.slice(0, 180) + "…" : msg;
+}
+
+async function readJsonSafe(res: Response) {
+  const text = await res.text().catch(() => "");
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    // in case server returned HTML or non-json
+    return { error: text.slice(0, 200) };
+  }
 }
 
 export default function BurnButton({
@@ -48,31 +62,24 @@ export default function BurnButton({
 
     if (!publicKey) return setErr("Connect wallet first.");
     if (!mint) return setErr("Burn unavailable.");
-    if (!Number.isFinite(amount) || amount <= 0)
-      return setErr("Enter valid amount.");
+    if (!Number.isFinite(amount) || amount <= 0) return setErr("Enter valid amount.");
 
     try {
       setLoading(true);
 
       const ata = await getAssociatedTokenAddress(mint, publicKey);
-      const base =
-        BigInt(Math.floor(amount)) * BigInt(10) ** BigInt(decimals);
+      const base = BigInt(Math.floor(amount)) * BigInt(10) ** BigInt(decimals);
 
       const tx = new Transaction().add(
-        createBurnCheckedInstruction(
-          ata,
-          mint,
-          publicKey,
-          base,
-          decimals
-        )
+        createBurnCheckedInstruction(ata, mint, publicKey, base, decimals)
       );
 
       const sig = await sendTransaction(tx, connection);
       const conf = await connection.confirmTransaction(sig, "confirmed");
       if (conf.value.err) throw new Error("On-chain error.");
 
-      const r = await fetch("/api/burn", {
+      // ✅ FIX: endpoint is /api/brun
+      const r = await fetch("/api/brun", {
         method: "POST",
         headers: { "content-type": "application/json" },
         cache: "no-store",
@@ -83,10 +90,10 @@ export default function BurnButton({
         }),
       });
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || "API error.");
+      const j = await readJsonSafe(r);
+      if (!r.ok) throw new Error(j?.error || `API error (${r.status}).`);
 
-      setOk(`Burn successful.`);
+      setOk("Burn successful.");
       onBurned?.(Math.floor(amount));
     } catch (e: any) {
       setErr(fmtErr(e));
