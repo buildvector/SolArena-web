@@ -5,7 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, Transaction } from "@solana/web3.js";
-import { createBurnCheckedInstruction, getAccount } from "@solana/spl-token";
+import {
+  createBurnCheckedInstruction,
+  getAccount,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} from "@solana/spl-token";
 
 import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
 
@@ -20,32 +25,70 @@ async function readJsonSafe(res: Response) {
 }
 
 /**
- * Important: Do NOT assume ATA.
- * Users can hold tokens in non-ATA token accounts.
- * We find the token account for this mint that actually has balance.
+ * Detect whether mint is classic SPL Token (Tokenkeg) or Token-2022 (TokenzQd)
+ * by looking at mint account owner program id.
+ */
+async function detectTokenProgramId(connection: any, mint: PublicKey) {
+  const info = await connection.getAccountInfo(mint, "confirmed");
+  if (!info) throw new Error("Mint account not found on chain (wrong mint/cluster/RPC).");
+
+  const owner = info.owner?.toBase58?.() ? info.owner.toBase58() : String(info.owner);
+
+  if (owner === TOKEN_2022_PROGRAM_ID.toBase58()) return TOKEN_2022_PROGRAM_ID;
+  if (owner === TOKEN_PROGRAM_ID.toBase58()) return TOKEN_PROGRAM_ID;
+
+  // If mint owner is neither, something is very wrong (or RPC parsing)
+  throw new Error(`Unknown mint program owner: ${owner}`);
+}
+
+/**
+ * Find the token account for (owner, mint) that actually has balance, using the correct token program.
  */
 async function findTokenAccountWithBalance(
   connection: any,
   owner: PublicKey,
-  mint: PublicKey
+  mint: PublicKey,
+  programId: PublicKey
 ): Promise<{ tokenAccount: PublicKey; balanceBaseUnits: bigint }> {
-  const resp = await connection.getTokenAccountsByOwner(owner, { mint });
+  // Some RPCs handle { mint } for both programs; if not, we fallback below.
+  let accounts: { pubkey: PublicKey }[] = [];
+  try {
+    const resp = await connection.getTokenAccountsByOwner(owner, { mint }, "confirmed");
+    accounts = resp.value.map((v: any) => ({ pubkey: v.pubkey }));
+  } catch {
+    accounts = [];
+  }
 
-  if (!resp.value.length) {
+  // Fallback: fetch all token accounts by programId, then filter by mint ourselves
+  if (accounts.length === 0) {
+    const respAll = await connection.getTokenAccountsByOwner(
+      owner,
+      { programId },
+      "confirmed"
+    );
+
+    for (const v of respAll.value ?? []) {
+      try {
+        const acc = await getAccount(connection, v.pubkey, "confirmed", programId);
+        if (acc.mint.equals(mint)) accounts.push({ pubkey: v.pubkey });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (!accounts.length) {
     throw new Error(
-      "This wallet has no token account for this mint. If you bought the token, try reconnecting / switching account and retry."
+      "No token account found for this mint on this wallet. (Mint/program mismatch or you have 0 balance.)"
     );
   }
 
-  // Pick the first token account with balance > 0
-  for (const v of resp.value) {
+  for (const a of accounts) {
     try {
-      const acc = await getAccount(connection, v.pubkey);
-      if (acc.amount > 0n) {
-        return { tokenAccount: v.pubkey, balanceBaseUnits: acc.amount };
-      }
+      const acc = await getAccount(connection, a.pubkey, "confirmed", programId);
+      if (acc.amount > 0n) return { tokenAccount: a.pubkey, balanceBaseUnits: acc.amount };
     } catch {
-      // ignore accounts that can't be parsed as SPL token accounts
+      // ignore non-token accounts / parse errors
     }
   }
 
@@ -57,62 +100,56 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
   const { publicKey, sendTransaction, connected } = useWallet();
 
   const [mounted, setMounted] = useState(false);
-  const [amount, setAmount] = useState<string>("10000"); // whole tokens
+  const [amount, setAmount] = useState<string>("10000");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>("");
   const [err, setErr] = useState<string>("");
 
   useEffect(() => setMounted(true), []);
-
   const mint = useMemo(() => TOKEN_MINT, []);
 
   async function onBurn() {
     setErr("");
     setMsg("");
 
-    if (!mint) {
-      setErr(
-        "TOKEN_MINT is not set yet. Set NEXT_PUBLIC_TOKEN_MINT in Vercel env after launch."
-      );
-      return;
-    }
-    if (!publicKey) {
-      setErr("Connect wallet first.");
-      return;
-    }
+    if (!mint) return setErr("TOKEN_MINT is not set (NEXT_PUBLIC_TOKEN_MINT).");
+    if (!publicKey) return setErr("Connect wallet first.");
 
     const whole = Math.floor(Number(amount));
-    if (!Number.isFinite(whole) || whole <= 0) {
-      setErr("Amount must be a whole number > 0");
-      return;
-    }
+    if (!Number.isFinite(whole) || whole <= 0) return setErr("Amount must be a whole number > 0");
 
     setBusy(true);
     try {
       const decimals = Number(TOKEN_DECIMALS ?? 9);
-      const baseUnits = BigInt(whole) * (BigInt(10) ** BigInt(decimals));
+      const baseUnits = BigInt(whole) * (10n ** BigInt(decimals));
 
-      setMsg("Finding token account...");
+      setMsg("Detecting token program...");
+      const programId = await detectTokenProgramId(connection, mint);
+
+      setMsg("Finding token account with balance...");
       const { tokenAccount, balanceBaseUnits } = await findTokenAccountWithBalance(
         connection,
         publicKey,
-        mint
+        mint,
+        programId
       );
 
       if (balanceBaseUnits < baseUnits) {
         const haveWhole = Number(balanceBaseUnits / (10n ** BigInt(decimals)));
         throw new Error(
-          `Insufficient ${TOKEN_SYMBOL || "TOKEN"} balance on this wallet. Have ~${haveWhole.toLocaleString()}, tried to burn ${whole.toLocaleString()}.`
+          `Insufficient ${TOKEN_SYMBOL || "TOKEN"} balance. Have ~${haveWhole.toLocaleString()}, tried to burn ${whole.toLocaleString()}.`
         );
       }
 
-      // Burn from the *actual* token account holding tokens (not necessarily ATA)
+      // ✅ Build burn instruction using the correct token program (Tokenkeg or Token-2022)
       const ix = createBurnCheckedInstruction(
-        tokenAccount, // token account (source)
-        mint, // mint
-        publicKey, // owner/authority
-        baseUnits, // amount in base units
-        decimals
+        tokenAccount,
+        mint,
+        publicKey,
+        baseUnits,
+        decimals,
+        [],
+        programId
       );
 
       const tx = new Transaction().add(ix);
@@ -137,16 +174,9 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       });
 
       const data = await readJsonSafe(res);
-      if (!res.ok) {
-        throw new Error(data?.error || `Burn verify failed (status ${res.status})`);
-      }
+      if (!res.ok) throw new Error(data?.error || `Burn verify failed (status ${res.status})`);
 
-      setMsg(
-        `✅ Burn counted: ${whole.toLocaleString()} ${TOKEN_SYMBOL || "TOKEN"} (tx: ${sig.slice(
-          0,
-          8
-        )}...)`
-      );
+      setMsg(`✅ Burn counted: ${whole.toLocaleString()} ${TOKEN_SYMBOL || "TOKEN"}`);
       onBurned?.();
     } catch (e: any) {
       setErr(e?.message || "Burn failed");
@@ -160,12 +190,8 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="font-semibold">Burn {TOKEN_SYMBOL || "TOKEN"}</div>
-          <div className="text-sm text-gray-400">
-            On-chain burn (burnChecked) → tier & multiplier unlock
-          </div>
+          <div className="text-sm text-gray-400">On-chain burn (burnChecked) → tier & multiplier unlock</div>
         </div>
-
-        {/* Avoid hydration mismatch */}
         {mounted ? <WalletMultiButton /> : <div className="h-10 w-40 rounded bg-white/10" />}
       </div>
 
@@ -185,16 +211,12 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
           className="rounded bg-white text-black px-4 py-2 font-semibold disabled:opacity-50"
           onClick={onBurn}
           disabled={!mounted || !connected || !publicKey || busy || !mint}
-          title={!mint ? "Set NEXT_PUBLIC_TOKEN_MINT first" : ""}
         >
           {busy ? "Burning..." : "Burn"}
         </button>
 
         <div className="text-xs text-gray-500">
-          Mint:{" "}
-          {mint
-            ? `${mint.toBase58().slice(0, 6)}...${mint.toBase58().slice(-4)}`
-            : "not set"}
+          Mint: {mint ? `${mint.toBase58().slice(0, 6)}...${mint.toBase58().slice(-4)}` : "not set"}
           <br />
           Decimals: {String(TOKEN_DECIMALS ?? 9)}
         </div>
@@ -202,13 +224,6 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
 
       {msg ? <div className="text-sm text-gray-300">{msg}</div> : null}
       {err ? <div className="text-sm text-red-300">{err}</div> : null}
-
-      {!mint ? (
-        <div className="text-xs text-amber-200/90 border border-amber-500/30 bg-amber-500/10 rounded p-3">
-          TOKEN_MINT is not set yet. That’s fine pre-launch. After launch, set{" "}
-          <code>NEXT_PUBLIC_TOKEN_MINT</code> to your mint (base58) and reload.
-        </div>
-      ) : null}
     </div>
   );
 }
