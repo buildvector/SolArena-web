@@ -3,13 +3,15 @@
 
 import { useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { Transaction } from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
 import {
-  getAssociatedTokenAddress,
+  TOKEN_2022_PROGRAM_ID,
   createBurnCheckedInstruction,
+  getAccount,
+  getMint,
 } from "@solana/spl-token";
 
-import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
+import { TOKEN_MINT, TOKEN_SYMBOL } from "@/lib/token-config";
 
 function fmtErr(e: any) {
   const msg =
@@ -18,7 +20,7 @@ function fmtErr(e: any) {
       : typeof e === "string"
       ? e
       : "Transaction failed";
-  return msg.length > 180 ? msg.slice(0, 180) + "…" : msg;
+  return msg.length > 220 ? msg.slice(0, 220) + "…" : msg;
 }
 
 async function readJsonSafe(res: Response) {
@@ -27,9 +29,31 @@ async function readJsonSafe(res: Response) {
   try {
     return JSON.parse(text);
   } catch {
-    // in case server returned HTML or non-json
     return { error: text.slice(0, 200) };
   }
+}
+
+async function findToken2022AccountWithBalance(
+  connection: any,
+  owner: PublicKey,
+  mint: PublicKey
+): Promise<{ tokenAccount: PublicKey; balanceBaseUnits: bigint }> {
+  const respAll = await connection.getTokenAccountsByOwner(
+    owner,
+    { programId: TOKEN_2022_PROGRAM_ID },
+    "confirmed"
+  );
+
+  for (const v of respAll.value ?? []) {
+    try {
+      const acc = await getAccount(connection, v.pubkey, "confirmed", TOKEN_2022_PROGRAM_ID);
+      if (acc.mint.equals(mint) && acc.amount > 0n) {
+        return { tokenAccount: v.pubkey, balanceBaseUnits: acc.amount };
+      }
+    } catch {}
+  }
+
+  throw new Error("No Token-2022 token account with balance found for this mint on this wallet.");
 }
 
 export default function BurnButton({
@@ -47,7 +71,6 @@ export default function BurnButton({
   const [ok, setOk] = useState<string | null>(null);
 
   const mint = TOKEN_MINT;
-  const decimals = Number(TOKEN_DECIMALS ?? 9);
 
   const canBurn = useMemo(() => {
     if (!connected || !publicKey) return false;
@@ -61,24 +84,47 @@ export default function BurnButton({
     setOk(null);
 
     if (!publicKey) return setErr("Connect wallet first.");
-    if (!mint) return setErr("Burn unavailable.");
+    if (!mint) return setErr("Burn unavailable (TOKEN_MINT missing).");
     if (!Number.isFinite(amount) || amount <= 0) return setErr("Enter valid amount.");
 
     try {
       setLoading(true);
 
-      const ata = await getAssociatedTokenAddress(mint, publicKey);
-      const base = BigInt(Math.floor(amount)) * BigInt(10) ** BigInt(decimals);
+      // Read decimals from chain (Token-2022)
+      const mintInfo = await getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID);
+      const decimals = mintInfo.decimals;
+
+      const whole = Math.floor(amount);
+      const base = BigInt(whole) * (10n ** BigInt(decimals));
+
+      // Find the real token account with balance (Token-2022)
+      const { tokenAccount, balanceBaseUnits } = await findToken2022AccountWithBalance(
+        connection,
+        publicKey,
+        mint
+      );
+
+      if (balanceBaseUnits < base) {
+        const haveWhole = Number(balanceBaseUnits / (10n ** BigInt(decimals)));
+        throw new Error(`Insufficient balance. Have ~${haveWhole}, tried to burn ${whole}.`);
+      }
 
       const tx = new Transaction().add(
-        createBurnCheckedInstruction(ata, mint, publicKey, base, decimals)
+        createBurnCheckedInstruction(
+          tokenAccount,
+          mint,
+          publicKey,
+          base,
+          decimals,
+          [],
+          TOKEN_2022_PROGRAM_ID
+        )
       );
 
       const sig = await sendTransaction(tx, connection);
       const conf = await connection.confirmTransaction(sig, "confirmed");
       if (conf.value.err) throw new Error("On-chain error.");
 
-      // ✅ FIX: endpoint is /api/brun
       const r = await fetch("/api/brun", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -86,7 +132,7 @@ export default function BurnButton({
         body: JSON.stringify({
           wallet: publicKey.toBase58(),
           signature: sig,
-          amount: Math.floor(amount),
+          amount: whole,
         }),
       });
 
@@ -94,7 +140,7 @@ export default function BurnButton({
       if (!r.ok) throw new Error(j?.error || `API error (${r.status}).`);
 
       setOk("Burn successful.");
-      onBurned?.(Math.floor(amount));
+      onBurned?.(whole);
     } catch (e: any) {
       setErr(fmtErr(e));
     } finally {

@@ -8,11 +8,11 @@ import { PublicKey, Transaction } from "@solana/web3.js";
 import {
   createBurnCheckedInstruction,
   getAccount,
-  TOKEN_PROGRAM_ID,
+  getMint,
   TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 
-import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
+import { TOKEN_MINT, TOKEN_SYMBOL } from "@/lib/token-config";
 
 async function readJsonSafe(res: Response) {
   const text = await res.text().catch(() => "");
@@ -24,75 +24,27 @@ async function readJsonSafe(res: Response) {
   }
 }
 
-/**
- * Detect whether mint is classic SPL Token (Tokenkeg) or Token-2022 (TokenzQd)
- * by looking at mint account owner program id.
- */
-async function detectTokenProgramId(connection: any, mint: PublicKey) {
-  const info = await connection.getAccountInfo(mint, "confirmed");
-  if (!info) throw new Error("Mint account not found on chain (wrong mint/cluster/RPC).");
-
-  const owner = info.owner?.toBase58?.() ? info.owner.toBase58() : String(info.owner);
-
-  if (owner === TOKEN_2022_PROGRAM_ID.toBase58()) return TOKEN_2022_PROGRAM_ID;
-  if (owner === TOKEN_PROGRAM_ID.toBase58()) return TOKEN_PROGRAM_ID;
-
-  // If mint owner is neither, something is very wrong (or RPC parsing)
-  throw new Error(`Unknown mint program owner: ${owner}`);
-}
-
-/**
- * Find the token account for (owner, mint) that actually has balance, using the correct token program.
- */
-async function findTokenAccountWithBalance(
+async function findToken2022AccountWithBalance(
   connection: any,
   owner: PublicKey,
-  mint: PublicKey,
-  programId: PublicKey
+  mint: PublicKey
 ): Promise<{ tokenAccount: PublicKey; balanceBaseUnits: bigint }> {
-  // Some RPCs handle { mint } for both programs; if not, we fallback below.
-  let accounts: { pubkey: PublicKey }[] = [];
-  try {
-    const resp = await connection.getTokenAccountsByOwner(owner, { mint }, "confirmed");
-    accounts = resp.value.map((v: any) => ({ pubkey: v.pubkey }));
-  } catch {
-    accounts = [];
-  }
+  const respAll = await connection.getTokenAccountsByOwner(
+    owner,
+    { programId: TOKEN_2022_PROGRAM_ID },
+    "confirmed"
+  );
 
-  // Fallback: fetch all token accounts by programId, then filter by mint ourselves
-  if (accounts.length === 0) {
-    const respAll = await connection.getTokenAccountsByOwner(
-      owner,
-      { programId },
-      "confirmed"
-    );
-
-    for (const v of respAll.value ?? []) {
-      try {
-        const acc = await getAccount(connection, v.pubkey, "confirmed", programId);
-        if (acc.mint.equals(mint)) accounts.push({ pubkey: v.pubkey });
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  if (!accounts.length) {
-    throw new Error(
-      "No token account found for this mint on this wallet. (Mint/program mismatch or you have 0 balance.)"
-    );
-  }
-
-  for (const a of accounts) {
+  for (const v of respAll.value ?? []) {
     try {
-      const acc = await getAccount(connection, a.pubkey, "confirmed", programId);
-      if (acc.amount > 0n) return { tokenAccount: a.pubkey, balanceBaseUnits: acc.amount };
-    } catch {
-      // ignore non-token accounts / parse errors
-    }
+      const acc = await getAccount(connection, v.pubkey, "confirmed", TOKEN_2022_PROGRAM_ID);
+      if (acc.mint.equals(mint) && acc.amount > 0n) {
+        return { tokenAccount: v.pubkey, balanceBaseUnits: acc.amount };
+      }
+    } catch {}
   }
 
-  throw new Error("Token account exists, but balance is 0 (nothing to burn).");
+  throw new Error("No Token-2022 token account with balance found for this mint on this wallet.");
 }
 
 export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
@@ -120,18 +72,17 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
 
     setBusy(true);
     try {
-      const decimals = Number(TOKEN_DECIMALS ?? 9);
+      setMsg("Reading mint decimals...");
+      const mintInfo = await getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID);
+      const decimals = mintInfo.decimals;
+
       const baseUnits = BigInt(whole) * (10n ** BigInt(decimals));
 
-      setMsg("Detecting token program...");
-      const programId = await detectTokenProgramId(connection, mint);
-
       setMsg("Finding token account with balance...");
-      const { tokenAccount, balanceBaseUnits } = await findTokenAccountWithBalance(
+      const { tokenAccount, balanceBaseUnits } = await findToken2022AccountWithBalance(
         connection,
         publicKey,
-        mint,
-        programId
+        mint
       );
 
       if (balanceBaseUnits < baseUnits) {
@@ -141,7 +92,6 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
         );
       }
 
-      // ✅ Build burn instruction using the correct token program (Tokenkeg or Token-2022)
       const ix = createBurnCheckedInstruction(
         tokenAccount,
         mint,
@@ -149,7 +99,7 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
         baseUnits,
         decimals,
         [],
-        programId
+        TOKEN_2022_PROGRAM_ID
       );
 
       const tx = new Transaction().add(ix);
@@ -190,7 +140,7 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="font-semibold">Burn {TOKEN_SYMBOL || "TOKEN"}</div>
-          <div className="text-sm text-gray-400">On-chain burn (burnChecked) → tier & multiplier unlock</div>
+          <div className="text-sm text-gray-400">Token-2022 burnChecked → tier & multiplier unlock</div>
         </div>
         {mounted ? <WalletMultiButton /> : <div className="h-10 w-40 rounded bg-white/10" />}
       </div>
@@ -217,8 +167,6 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
 
         <div className="text-xs text-gray-500">
           Mint: {mint ? `${mint.toBase58().slice(0, 6)}...${mint.toBase58().slice(-4)}` : "not set"}
-          <br />
-          Decimals: {String(TOKEN_DECIMALS ?? 9)}
         </div>
       </div>
 
