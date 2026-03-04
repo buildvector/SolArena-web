@@ -4,11 +4,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { Transaction } from "@solana/web3.js";
-import {
-  getAssociatedTokenAddress,
-  createBurnCheckedInstruction,
-} from "@solana/spl-token";
+import { PublicKey, Transaction } from "@solana/web3.js";
+import { createBurnCheckedInstruction, getAccount } from "@solana/spl-token";
 
 import { TOKEN_MINT, TOKEN_DECIMALS, TOKEN_SYMBOL } from "@/lib/token-config";
 
@@ -20,6 +17,39 @@ async function readJsonSafe(res: Response) {
   } catch {
     return { error: text.slice(0, 200) };
   }
+}
+
+/**
+ * Important: Do NOT assume ATA.
+ * Users can hold tokens in non-ATA token accounts.
+ * We find the token account for this mint that actually has balance.
+ */
+async function findTokenAccountWithBalance(
+  connection: any,
+  owner: PublicKey,
+  mint: PublicKey
+): Promise<{ tokenAccount: PublicKey; balanceBaseUnits: bigint }> {
+  const resp = await connection.getTokenAccountsByOwner(owner, { mint });
+
+  if (!resp.value.length) {
+    throw new Error(
+      "This wallet has no token account for this mint. If you bought the token, try reconnecting / switching account and retry."
+    );
+  }
+
+  // Pick the first token account with balance > 0
+  for (const v of resp.value) {
+    try {
+      const acc = await getAccount(connection, v.pubkey);
+      if (acc.amount > 0n) {
+        return { tokenAccount: v.pubkey, balanceBaseUnits: acc.amount };
+      }
+    } catch {
+      // ignore accounts that can't be parsed as SPL token accounts
+    }
+  }
+
+  throw new Error("Token account exists, but balance is 0 (nothing to burn).");
 }
 
 export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
@@ -42,7 +72,7 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
 
     if (!mint) {
       setErr(
-        "TOKEN_MINT is not set yet. Set NEXT_PUBLIC_TOKEN_MINT in .env.local after launch."
+        "TOKEN_MINT is not set yet. Set NEXT_PUBLIC_TOKEN_MINT in Vercel env after launch."
       );
       return;
     }
@@ -62,13 +92,26 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       const decimals = Number(TOKEN_DECIMALS ?? 9);
       const baseUnits = BigInt(whole) * (BigInt(10) ** BigInt(decimals));
 
-      const ata = await getAssociatedTokenAddress(mint, publicKey);
-
-      const ix = createBurnCheckedInstruction(
-        ata,
-        mint,
+      setMsg("Finding token account...");
+      const { tokenAccount, balanceBaseUnits } = await findTokenAccountWithBalance(
+        connection,
         publicKey,
-        baseUnits,
+        mint
+      );
+
+      if (balanceBaseUnits < baseUnits) {
+        const haveWhole = Number(balanceBaseUnits / (10n ** BigInt(decimals)));
+        throw new Error(
+          `Insufficient ${TOKEN_SYMBOL || "TOKEN"} balance on this wallet. Have ~${haveWhole.toLocaleString()}, tried to burn ${whole.toLocaleString()}.`
+        );
+      }
+
+      // Burn from the *actual* token account holding tokens (not necessarily ATA)
+      const ix = createBurnCheckedInstruction(
+        tokenAccount, // token account (source)
+        mint, // mint
+        publicKey, // owner/authority
+        baseUnits, // amount in base units
         decimals
       );
 
@@ -82,7 +125,6 @@ export default function BurnPanel({ onBurned }: { onBurned?: () => void }) {
       if (conf.value.err) throw new Error("Transaction failed during confirmation");
 
       setMsg("Validating burn on backend...");
-      // ✅ FIX: endpoint is /api/brun
       const res = await fetch("/api/brun", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
